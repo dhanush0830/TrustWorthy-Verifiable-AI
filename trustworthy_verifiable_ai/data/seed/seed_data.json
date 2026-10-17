@@ -1,0 +1,162 @@
+{
+  "users": [
+    {
+      "id": "USR-CUST-A",
+      "email": "customer.a@example.com",
+      "name": "Alice Anderson",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-CUST-B",
+      "email": "customer.b@example.com",
+      "name": "Bob Baker",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-CUST-C",
+      "email": "customer.c@example.com",
+      "name": "Charlie Clark",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-CUST-D",
+      "email": "customer.d@example.com",
+      "name": "Diana Davis",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-CUST-E",
+      "email": "customer.e@example.com",
+      "name": "Evan Evans",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-CUST-F",
+      "email": "customer.f@example.com",
+      "name": "Fiona Frank",
+      "role": "customer",
+      "password": "Password123!"
+    },
+    {
+      "id": "USR-AGENT-1",
+      "email": "agent@example.com",
+      "name": "Support Agent Sarah",
+      "role": "agent",
+      "password": "AgentPassword123!"
+    },
+    {
+      "id": "USR-REV-1",
+      "email": "reviewer@example.com",
+      "name": "Reviewer Ryan",
+      "role": "reviewer",
+      "password": "ReviewerPassword123!"
+    }
+  ],
+  "policies": [
+    {
+      "id": "POL-REFUND-STANDARD",
+      "name": "Standard Refund Policy",
+      "description": "Standard 30-day refund window policy for settled payments",
+      "rules_json": "{\"window_days\": 30, \"require_settled\": true, \"max_auto_amount\": 50000}"
+    }
+  ],
+  "scenarios": {
+    "a_two_settled": {
+      "customer_id": "USR-CUST-A",
+      "orders": [
+        {"id": "ORD-101", "order_number": "ORD-NUM-101", "amount": 49900, "status": "completed"},
+        {"id": "ORD-102", "order_number": "ORD-NUM-102", "amount": 29900, "status": "completed"}
+      ],
+      "payments": [
+        {"id": "PAY-101", "order_id": "ORD-101", "amount": 49900, "status": "settled"},
+        {"id": "PAY-102", "order_id": "ORD-102", "amount": 29900, "status": "settled"}
+      ]
+    },
+    "b_settled_and_auth_hold": {
+      "customer_id": "USR-CUST-B",
+      "orders": [
+        {"id": "ORD-201", "order_number": "ORD-NUM-201", "amount": 10000, "status": "completed"},
+        {"id": "ORD-202", "order_number": "ORD-NUM-202", "amount": 10000, "status": "completed"}
+      ],
+      "payments": [
+        {"id": "PAY-201", "order_id": "ORD-201", "amount": 10000, "status": "settled"},
+        {"id": "PAY-202", "order_id": "ORD-202", "amount": 10000, "status": "authorized"}
+      ]
+    },
+    "c_settled_and_pending_refund": {
+      "customer_id": "USR-CUST-C",
+      "orders": [
+        {"id": "ORD-301", "order_number": "ORD-NUM-301", "amount": 15000, "status": "completed"}
+      ],
+      "payments": [
+        {"id": "PAY-301", "order_id": "ORD-301", "amount": 15000, "status": "settled"}
+      ],
+      "refunds": [
+        {"id": "REF-301", "payment_id": "PAY-301", "amount": 15000, "status": "pending", "reason": "Customer requested cancellation"}
+      ]
+    },
+    "d_failed_order_successful_payment": {
+      "customer_id": "USR-CUST-D",
+      "orders": [
+        {"id": "ORD-401", "order_number": "ORD-NUM-401", "amount": 5000, "status": "failed"}
+      ],
+      "payments": [
+        {"id": "PAY-401", "order_id": "ORD-401", "amount": 5000, "status": "settled"}
+      ]
+    },
+    "e_duplicate_event": {
+      "customer_id": "USR-CUST-E",
+      "orders": [
+        {"id": "ORD-501", "order_number": "ORD-NUM-501", "amount": 7500, "status": "completed"}
+      ],
+      "payments": [
+        {"id": "PAY-501", "order_id": "ORD-501", "amount": 7500, "status": "settled"}
+      ],
+      "payment_events": [
+        {
+          "provider_event_id": "evt_dup_provider_101",
+          "payment_id": "PAY-501",
+          "event_type": "payment.settled",
+          "amount": 7500,
+          "occurred_at": "2026-10-17T12:00:00Z",
+          "received_at": "2026-10-17T12:01:00Z",
+          "raw_payload": "{\"event\": \"payment.settled\", \"id\": \"evt_dup_provider_101\", \"payment_id\": \"PAY-501\", \"amount\": 7500}"
+        }
+      ]
+    },
+    "f_out_of_order_events": {
+      "customer_id": "USR-CUST-F",
+      "orders": [
+        {"id": "ORD-601", "order_number": "ORD-NUM-601", "amount": 8800, "status": "completed"}
+      ],
+      "payments": [
+        {"id": "PAY-601", "order_id": "ORD-601", "amount": 8800, "status": "settled"}
+      ],
+      "payment_events": [
+        {
+          "provider_event_id": "evt_ooo_settled_01",
+          "payment_id": "PAY-601",
+          "event_type": "payment.settled",
+          "amount": 8800,
+          "occurred_at": "2026-10-17T14:10:00Z",
+          "received_at": "2026-10-17T14:11:00Z",
+          "raw_payload": "{\"event\": \"payment.settled\", \"id\": \"evt_ooo_settled_01\", \"payment_id\": \"PAY-601\", \"amount\": 8800}"
+        },
+        {
+          "provider_event_id": "evt_ooo_auth_02",
+          "payment_id": "PAY-601",
+          "event_type": "payment.authorized",
+          "amount": 8800,
+          "occurred_at": "2026-10-17T14:00:00Z",
+          "received_at": "2026-10-17T14:15:00Z",
+          "raw_payload": "{\"event\": \"payment.authorized\", \"id\": \"evt_ooo_auth_02\", \"payment_id\": \"PAY-601\", \"amount\": 8800}"
+        }
+      ]
+    }
+  }
+}

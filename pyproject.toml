@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["trustworthy_verifiable_ai/backend/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+pythonpath = ["trustworthy_verifiable_ai/backend", "."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

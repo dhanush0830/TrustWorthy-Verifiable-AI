@@ -1,0 +1,28 @@
+[project]
+name = "trustworthy_verifiable_ai"
+version = "0.1.0"
+description = "Trustworthy and Verifiable AI Complaint Investigation Platform"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.28.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "sqlalchemy>=2.0.28",
+    "pyjwt>=2.8.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+pythonpath = [".."]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
