@@ -1,13 +1,13 @@
 """Deterministic contradiction detection engine across evidence items (FR-04)."""
 import json
-from datetime import datetime, timezone
-from typing import List, Dict, Any
+from datetime import UTC, datetime
+from typing import Any
 
 from app.models.evidence import EvidenceItem, FreshnessIndicator
 from app.schemas.evidence import Contradiction
 
 
-def detect_contradictions(evidence_items: List[EvidenceItem]) -> List[Contradiction]:
+def detect_contradictions(evidence_items: list[EvidenceItem]) -> list[Contradiction]:
     """Detect discrepancies and contradictions across evidence records.
 
     Invariants:
@@ -15,14 +15,14 @@ def detect_contradictions(evidence_items: List[EvidenceItem]) -> List[Contradict
     - Deterministic code NEVER silently resolves or picks one record.
     - Marks affected evidence items with freshness_indicator = CONFLICTING_RECORDS.
     """
-    contradictions: List[Contradiction] = []
-    now = datetime.now(timezone.utc)
+    contradictions: list[Contradiction] = []
+    now = datetime.now(UTC)
 
     # Index evidence by source_system and source_record_id
-    items_by_record_id: Dict[str, List[EvidenceItem]] = {}
-    orders_by_id: Dict[str, Dict[str, Any]] = {}
-    payments_by_id: Dict[str, Dict[str, Any]] = {}
-    order_to_payments: Dict[str, List[str]] = {}
+    items_by_record_id: dict[str, list[EvidenceItem]] = {}
+    orders_by_id: dict[str, dict[str, Any]] = {}
+    payments_by_id: dict[str, dict[str, Any]] = {}
+    order_to_payments: dict[str, list[str]] = {}
 
     for item in evidence_items:
         items_by_record_id.setdefault(item.source_record_id, []).append(item)

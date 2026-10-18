@@ -2,13 +2,13 @@
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
-from typing import List, Dict, Any
+from datetime import UTC, datetime
+from typing import Any
+
 from sqlalchemy.orm import Session
 
-from app.models.case import Case
-from app.models.evidence import EvidenceItem, EvidenceSnapshot
 from app.models.audit import AuditEvent
+from app.models.evidence import EvidenceItem, EvidenceSnapshot
 
 
 def serialize_canonical(data: Any) -> str:
@@ -24,7 +24,7 @@ def serialize_canonical(data: Any) -> str:
 def build_evidence_snapshot(
     db: Session,
     case_id: str,
-    evidence_items: List[EvidenceItem],
+    evidence_items: list[EvidenceItem],
     actor_id: str = "system_snapshot"
 ) -> EvidenceSnapshot:
     """Build a deterministic, canonical snapshot of all evidence gathered for a case.
@@ -47,7 +47,7 @@ def build_evidence_snapshot(
     )
 
     # 2. Extract canonical representation for each item
-    canonical_list: List[Dict[str, Any]] = []
+    canonical_list: list[dict[str, Any]] = []
     for item in sorted_items:
         try:
             payload_dict = json.loads(item.data_payload)
@@ -83,7 +83,7 @@ def build_evidence_snapshot(
         snapshot_hash=snapshot_hash,
         canonical_json=canonical_json,
         evidence_count=len(sorted_items),
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     db.add(snapshot)
     db.flush()

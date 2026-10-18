@@ -1,8 +1,9 @@
 """Tests for deterministic seed data and idempotency (NFR-02, NFR-03, Scenarios a-f)."""
 from sqlalchemy.orm import Session
+
 from app.db.seed import seed_database
 from app.models.order import Order
-from app.models.payment import Payment, PaymentStatus, PaymentEvent
+from app.models.payment import Payment, PaymentEvent, PaymentStatus
 from app.models.refund import Refund, RefundStatus
 from app.models.user import User
 

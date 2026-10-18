@@ -1,6 +1,7 @@
 """Configuration settings for Trustworthy and Verifiable AI backend."""
 from functools import lru_cache
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,14 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_PATH: Path = Path(__file__).resolve().parents[2] / "trustworthy_ai.db"
+    
+    # LLM / Ollama Configuration
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "qwen2.5:7b"
+    OLLAMA_TIMEOUT_SECONDS: float = 60.0
+    LLM_TEMPERATURE: float = 0.0
+    LLM_PROMPT_VERSION: str = "2026-10-phase2-v1"
+    MAX_COMPLAINT_CHARS: int = 4000
     
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:

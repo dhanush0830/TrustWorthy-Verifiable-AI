@@ -1,18 +1,17 @@
 """Evidence collector gathering authorized case context with freshness indicators (FR-02, FR-04)."""
 import json
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
-from app.db.scoped import scoped_query
+from app.evidence.contradictions import detect_contradictions
 from app.models.case import Case
+from app.models.evidence import EvidenceItem, FreshnessIndicator
 from app.models.order import Order
 from app.models.payment import Payment, PaymentEvent
 from app.models.refund import Refund
-from app.models.evidence import EvidenceItem, FreshnessIndicator
 from app.models.user import User
-from app.evidence.contradictions import detect_contradictions
 
 
 def gather_case_evidence(
@@ -20,7 +19,7 @@ def gather_case_evidence(
     case: Case,
     user: User,
     source_available: bool = True
-) -> List[EvidenceItem]:
+) -> list[EvidenceItem]:
     """Gather authorized evidence items for a given case and assign freshness indicators.
 
     Invariants:
@@ -29,8 +28,8 @@ def gather_case_evidence(
     - If source_available is False, flags SOURCE_UNAVAILABLE.
     - Runs contradiction detection across the collection.
     """
-    evidence_items: List[EvidenceItem] = []
-    now = datetime.now(timezone.utc)
+    evidence_items: list[EvidenceItem] = []
+    now = datetime.now(UTC)
     cust_id = case.customer_id
 
     # If source systems are declared unavailable (e.g. simulated network outage)

@@ -1,13 +1,13 @@
 """Test configuration and fixtures with isolated in-memory database."""
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
 
 from app.core.security import create_access_token
 from app.db.base import Base
-from app.db.session import get_db
 from app.db.seed import seed_database
+from app.db.session import get_db
 from app.main import app
 
 # In-memory test SQLite engine

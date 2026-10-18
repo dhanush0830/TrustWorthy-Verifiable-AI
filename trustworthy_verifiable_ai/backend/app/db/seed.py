@@ -6,23 +6,23 @@ Enforces:
 - SEC-01: Seeded roles (customer, agent, reviewer).
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.db.base import Base
-from app.db.session import engine, SessionLocal
-from app.models.user import User, UserRole
+from app.db.session import SessionLocal, engine
 from app.models.order import Order
-from app.models.payment import Payment, PaymentStatus, PaymentEvent
-from app.models.refund import Refund, RefundStatus
+from app.models.payment import Payment, PaymentEvent, PaymentStatus
 from app.models.policy import Policy
+from app.models.refund import Refund, RefundStatus
+from app.models.user import User, UserRole
 
 
-def load_seed_json() -> Dict[str, Any]:
+def load_seed_json() -> dict[str, Any]:
     """Load raw seed data from canonical JSON file."""
     candidates = [
         Path(__file__).resolve().parents[3] / "data" / "seed" / "seed_data.json",
@@ -32,7 +32,7 @@ def load_seed_json() -> Dict[str, Any]:
     ]
     for seed_path in candidates:
         if seed_path.exists():
-            with open(seed_path, "r", encoding="utf-8") as f:
+            with open(seed_path, encoding="utf-8") as f:
                 return json.load(f)
     raise FileNotFoundError("Could not find seed_data.json")
 
@@ -42,7 +42,7 @@ def parse_iso(dt_str: str) -> datetime:
     return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
 
 
-def seed_database(db: Session = None) -> Dict[str, int]:
+def seed_database(db: Session | None = None) -> dict[str, int]:
     """Idempotently seed the database with deterministic scenario data.
 
     Returns:

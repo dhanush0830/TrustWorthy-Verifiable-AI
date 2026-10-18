@@ -1,19 +1,19 @@
 """Payments API with strict tenant boundary enforcement (SEC-01, Design Rule 2)."""
-from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.db.scoped import get_scoped_record, scoped_query
 from app.db.session import get_db
-from app.db.scoped import scoped_query, get_scoped_record
-from app.models.user import User
 from app.models.payment import Payment
+from app.models.user import User
 from app.schemas.payment import PaymentRead
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
 
-@router.get("", response_model=List[PaymentRead])
+@router.get("", response_model=list[PaymentRead])
 def list_payments(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

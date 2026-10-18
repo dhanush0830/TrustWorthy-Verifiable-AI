@@ -4,17 +4,16 @@ Enforces:
 - SEC-01: Signed token generation and role-based payload validation.
 - Deny-by-default role authorization.
 """
-from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
-import os
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime, timedelta
+from functools import lru_cache
+from typing import Any
+
 import jwt
 
 from app.core.config import get_settings
 
-
-from functools import lru_cache
 
 @lru_cache(maxsize=128)
 def get_password_hash(password: str) -> str:
@@ -40,17 +39,17 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(
     subject: str,
     role: str,
-    expires_delta: Optional[timedelta] = None
+    expires_delta: timedelta | None = None
 ) -> str:
     """Create a signed JWT access token carrying subject (user_id) and role."""
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if expires_delta:
         expire = now + expires_delta
     else:
         expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "sub": subject,
         "role": role,
         "iat": int(now.timestamp()),
@@ -60,7 +59,7 @@ def create_access_token(
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Dict[str, Any]:
+def decode_access_token(token: str) -> dict[str, Any]:
     """Decode and validate a signed JWT access token.
     
     Raises:

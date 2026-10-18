@@ -3,7 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.scoped import scoped_query, AuthorizationError
+from app.db.scoped import AuthorizationError, scoped_query
 from app.models.payment import Payment
 from app.models.policy import Policy
 from app.models.user import User

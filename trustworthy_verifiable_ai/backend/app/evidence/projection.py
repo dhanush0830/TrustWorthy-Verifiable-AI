@@ -1,11 +1,11 @@
 """Payment state projection engine with deterministic status-precedence rules (FR-03, FR-17)."""
 import json
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
-from app.models.payment import Payment, PaymentStatus, PaymentEvent
 from app.models.audit import AuditEvent
+from app.models.payment import Payment, PaymentEvent, PaymentStatus
 
 # Precedence ranking: Higher rank cannot be downgraded by lower rank
 STATUS_PRECEDENCE = {
@@ -27,7 +27,7 @@ def project_payment_state(
     db: Session,
     payment_id: str,
     actor_id: str = "system_projection"
-) -> Optional[str]:
+) -> str | None:
     """Rebuild current payment state from events using occurred_at and status-precedence rules.
 
     Invariants:
@@ -78,7 +78,7 @@ def project_payment_state(
     if current_projected and current_projected != payment.status:
         old_status = payment.status.value
         payment.status = current_projected
-        payment.updated_at = datetime.now(timezone.utc)
+        payment.updated_at = datetime.now(UTC)
         db.flush()
 
         audit = AuditEvent(

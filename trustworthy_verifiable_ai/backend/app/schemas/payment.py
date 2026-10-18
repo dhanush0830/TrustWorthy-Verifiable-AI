@@ -5,8 +5,9 @@ Enforces:
 - SEC-05: No card numbers or payment credentials exposed.
 """
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel
+
 from app.models.payment import PaymentStatus
 from app.models.refund import RefundStatus
 
@@ -27,7 +28,7 @@ class OrderRead(BaseModel):
 class PaymentRead(BaseModel):
     id: str
     customer_id: str
-    order_id: Optional[str] = None
+    order_id: str | None = None
     amount: int  # integer minor units
     currency: str
     status: PaymentStatus
@@ -45,7 +46,7 @@ class RefundRead(BaseModel):
     amount: int  # integer minor units
     currency: str
     status: RefundStatus
-    reason: Optional[str] = None
+    reason: str | None = None
     created_at: datetime
 
     class Config:

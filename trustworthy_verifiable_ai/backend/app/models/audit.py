@@ -1,6 +1,7 @@
 """Audit event model for compliance, security, and traceability (FR-17)."""
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, DateTime, Text
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,7 +20,7 @@ class AuditEvent(Base):
     details_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
         index=True
     )

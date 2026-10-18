@@ -1,12 +1,13 @@
 """Append-only event ingestion with strict deduplication (FR-03, FR-17)."""
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
-from app.models.payment import PaymentEvent
-from app.models.audit import AuditEvent
-from app.schemas.evidence import EventIngestRequest, EventIngestResponse
 from app.evidence.projection import project_payment_state
+from app.models.audit import AuditEvent
+from app.models.payment import PaymentEvent
+from app.schemas.evidence import EventIngestRequest, EventIngestResponse
 
 
 def ingest_event(
@@ -53,7 +54,7 @@ def ingest_event(
         )
 
     # 2. Append-only insert of new event
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     new_event = PaymentEvent(
         provider_event_id=request.provider_event_id,
         payment_id=request.payment_id,

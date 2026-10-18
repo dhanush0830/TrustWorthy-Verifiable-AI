@@ -4,11 +4,10 @@ Enforces:
 - SEC-01: Role-based access control, deny-by-default.
 - Signed token validation.
 """
-from typing import Generator, List
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
@@ -43,12 +42,12 @@ def get_current_user(
                 detail="Token subject missing.",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as err:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token.",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from err
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -61,7 +60,7 @@ def get_current_user(
     return user
 
 
-def require_roles(allowed_roles: List[UserRole]):
+def require_roles(allowed_roles: list[UserRole]):
     """Return a dependency that enforces the user has one of the allowed roles."""
     def role_checker(user: User = Depends(get_current_user)) -> User:
         if user.role not in allowed_roles:

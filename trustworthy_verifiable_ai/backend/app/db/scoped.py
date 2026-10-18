@@ -5,9 +5,9 @@ Invariants:
 - Knowing a record ID (case_id, payment_id, order_id) grants zero access if out-of-scope.
 - Deny by default.
 """
-from typing import Type, TypeVar, Optional, Any
-from sqlalchemy.orm import Session, Query
-from sqlalchemy import false
+from typing import Any, TypeVar
+
+from sqlalchemy.orm import Query, Session
 
 from app.models.user import User, UserRole
 
@@ -16,10 +16,9 @@ T = TypeVar("T")
 
 class AuthorizationError(PermissionError):
     """Raised when an operation violates role or boundary scoping."""
-    pass
 
 
-def scoped_query(db: Session, model: Type[T], user: User) -> Query[T]:
+def scoped_query(db: Session, model: type[T], user: User) -> Query[T]:
     """Return a SQLAlchemy Query strictly scoped to the authenticated user.
 
     Args:
@@ -39,9 +38,11 @@ def scoped_query(db: Session, model: Type[T], user: User) -> Query[T]:
     # Customer scope: strictly restricted to their own records
     if user.role == UserRole.CUSTOMER:
         if hasattr(model, "customer_id"):
-            return db.query(model).filter(getattr(model, "customer_id") == user.id)
-        elif model == User or (hasattr(model, "__tablename__") and model.__tablename__ == "users"):
-            return db.query(model).filter(getattr(model, "id") == user.id)
+            cust_col = getattr(model, "customer_id")
+            return db.query(model).filter(cust_col == user.id)
+        elif model == User or (hasattr(model, "__tablename__") and getattr(model, "__tablename__", None) == "users"):
+            id_col = getattr(model, "id")
+            return db.query(model).filter(id_col == user.id)
         else:
             # Deny by default: customers cannot query models without customer context
             raise AuthorizationError(
@@ -58,13 +59,14 @@ def scoped_query(db: Session, model: Type[T], user: User) -> Query[T]:
 
 def get_scoped_record(
     db: Session,
-    model: Type[T],
+    model: type[T],
     record_id: Any,
     user: User
-) -> Optional[T]:
+) -> T | None:
     """Retrieve a single record strictly within the user's authorized scope.
 
     A known record ID grants nothing if it belongs to another customer.
     """
     query = scoped_query(db, model, user)
-    return query.filter(getattr(model, "id") == record_id).first()
+    id_col = getattr(model, "id")
+    return query.filter(id_col == record_id).first()

@@ -1,8 +1,9 @@
 """EvidenceItem and EvidenceSnapshot models with freshness indicators and audit tracking (FR-04, FR-17)."""
-from datetime import datetime, timezone
 import enum
-from sqlalchemy import String, Integer, DateTime, Enum, ForeignKey, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
@@ -37,7 +38,7 @@ class EvidenceItem(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False
     )
     
@@ -53,7 +54,7 @@ class EvidenceItem(Base):
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False
     )
 
@@ -73,6 +74,6 @@ class EvidenceSnapshot(Base):
     
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False
     )

@@ -1,25 +1,25 @@
 """Tests for Phase 1 Evidence layer (FR-03, FR-04, FR-17)."""
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.orm import Session
 
-from app.models.case import Case, CaseStatus
-from app.models.order import Order
-from app.models.payment import Payment, PaymentStatus, PaymentEvent
-from app.models.evidence import EvidenceItem, FreshnessIndicator
-from app.models.audit import AuditEvent
-from app.models.user import User
-from app.schemas.evidence import EventIngestRequest
+from app.evidence.collector import gather_case_evidence
+from app.evidence.contradictions import detect_contradictions
 from app.evidence.ingestion import ingest_event
 from app.evidence.projection import project_payment_state
-from app.evidence.contradictions import detect_contradictions
 from app.evidence.snapshot import build_evidence_snapshot
-from app.evidence.collector import gather_case_evidence
+from app.models.audit import AuditEvent
+from app.models.case import Case, CaseStatus
+from app.models.evidence import EvidenceItem, FreshnessIndicator
+from app.models.payment import Payment, PaymentEvent, PaymentStatus
+from app.models.user import User
+from app.schemas.evidence import EventIngestRequest
 
 
 def test_duplicate_event_delivered_twice_is_counted_once(db_session: Session):
     """FR-03: The same event delivered twice is counted once (idempotent, no error)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     req = EventIngestRequest(
         provider_event_id="evt_test_dedupe_100",
         payment_id="PAY-101",
@@ -56,7 +56,7 @@ def test_duplicate_event_delivered_twice_is_counted_once(db_session: Session):
 
 def test_older_authorized_arriving_after_newer_settled_keeps_settled(db_session: Session):
     """FR-03: An older 'authorized' event arriving after a newer 'settled' event keeps state as settled."""
-    base_time = datetime(2026, 10, 17, 12, 0, 0, tzinfo=timezone.utc)
+    base_time = datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC)
     t_settled = base_time + timedelta(minutes=10)
     t_authorized = base_time  # occurred 10 minutes earlier
 
@@ -112,7 +112,6 @@ def test_older_authorized_arriving_after_newer_settled_keeps_settled(db_session:
 
 def test_contradictory_records_are_flagged_not_resolved_silently(db_session: Session):
     """FR-04: Contradictory records are flagged with details and NEVER resolved silently."""
-    now = datetime.now(timezone.utc)
     customer = db_session.query(User).filter(User.id == "USR-CUST-D").first()
 
     # Scenario d: ORD-401 is failed, but PAY-401 is settled
@@ -146,7 +145,7 @@ def test_contradictory_records_are_flagged_not_resolved_silently(db_session: Ses
 
 def test_snapshot_hash_changes_when_evidence_changes(db_session: Session):
     """FR-04: The evidence snapshot hash changes when any evidence field changes."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Create Case entity
     case = Case(
@@ -243,7 +242,7 @@ def test_seeded_scenarios_e_and_f(db_session: Session):
         event_type="payment.settled",
         amount=7500,
         currency="USD",
-        occurred_at=datetime(2026, 10, 17, 12, 0, 0, tzinfo=timezone.utc),
+        occurred_at=datetime(2026, 10, 17, 12, 0, 0, tzinfo=UTC),
         raw_payload='{"status": "settled"}'
     )
     res_e = ingest_event(db_session, req_e)
@@ -260,7 +259,7 @@ def test_seeded_scenarios_e_and_f(db_session: Session):
 
 def test_audit_events_created_for_evidence_operations(db_session: Session):
     """FR-17: Audit events are logged for ingestion, projection, and snapshot operations."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # 1. Trigger ingestion
     req = EventIngestRequest(
