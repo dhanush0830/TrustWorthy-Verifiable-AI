@@ -1,5 +1,6 @@
 """Main FastAPI application entrypoint for Trustworthy and Verifiable AI."""
 from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
@@ -15,6 +16,15 @@ app = FastAPI(
     title="Trustworthy and Verifiable AI",
     description="Deterministic AI Complaint Investigation Platform",
     version="0.1.0",
+)
+
+# CORS configuration supporting local development and production Vercel origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

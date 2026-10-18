@@ -1,9 +1,13 @@
 /**
  * API client for TrustWorthy AI backend.
- * All requests go to /api/v1 (proxied by Vite dev server to port 8000).
+ * In production (e.g. on Vercel), uses VITE_API_BASE_URL.
+ * In local development, falls back to '/api/v1' proxied by Vite dev server.
  */
 
-const BASE = '/api/v1';
+const rawBase = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
+const BASE = rawBase
+  ? (rawBase.endsWith('/api/v1') ? rawBase : `${rawBase}/api/v1`)
+  : '/api/v1';
 
 function authHeaders(token) {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
