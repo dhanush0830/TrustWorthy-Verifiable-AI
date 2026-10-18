@@ -52,4 +52,5 @@ def investigate_case(
         db.commit()
 
     # 3. Execute investigation
-    return run_case_investigation(db=db, case_id=case_id, user=user)
+    provider = payload.provider if payload else None
+    return run_case_investigation(db=db, case_id=case_id, user=user, provider=provider)

@@ -1,13 +1,16 @@
 """Tests for AI Investigation service, retry, evidence validation, and Audit logging (FR-05, FR-06, FR-17, SEC-04, NFR-01)."""
+from datetime import UTC, datetime
 import hashlib
 import json
 
 from sqlalchemy.orm import Session
 
 from app.llm.mock_client import MockLLMClient
-from app.llm.service import run_case_investigation
+from app.llm.service import run_case_investigation, validate_claims_evidence
 from app.models.audit import AuditEvent
 from app.models.case import Case, CaseStatus
+from app.models.evidence import FreshnessIndicator
+from app.schemas.evidence import EvidenceItemRead
 from app.schemas.investigation import ActionType, Claim, ClaimType, InvestigationResult, ProposedAction
 
 
@@ -224,3 +227,618 @@ def test_audit_event_stores_input_hash_not_raw_complaint(db_session: Session):
     # Audit event MUST store SHA-256 hash of the input
     expected_hash = hashlib.sha256(raw_secret_text.encode("utf-8")).hexdigest()
     assert details["model_input_hash"] == expected_hash
+
+
+# ---------------------------------------------------------------------------
+# Tests for deterministic duplicate-charge cross-order consistency check
+# ---------------------------------------------------------------------------
+
+def _make_evidence_item(
+    evidence_id: str,
+    payment_id: str,
+    order_id: str | None,
+    amount: int = 49900,
+) -> EvidenceItemRead:
+    """Helper to construct a minimal EvidenceItemRead for consistency-check tests."""
+    import json
+    from datetime import UTC, datetime
+
+    from app.models.evidence import FreshnessIndicator
+
+    now = datetime.now(UTC)
+    payload = {"payment_id": payment_id, "amount": amount, "currency": "USD", "status": "settled"}
+    if order_id is not None:
+        payload["order_id"] = order_id
+    return EvidenceItemRead(
+        id=evidence_id,
+        case_id="CAS-TEST",
+        customer_id="USR-CUST-A",
+        source_system="payment_provider",
+        source_record_id=payment_id,
+        occurred_at=now,
+        received_at=now,
+        fetched_at=now,
+        record_version=1,
+        freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+        data_payload=json.dumps(payload),
+    )
+
+
+def test_duplicate_charge_claim_with_different_orders_is_rejected(db_session: Session):
+    """Trust invariant: duplicate_charge claim citing payments from DIFFERENT orders is rejected.
+
+    Scenario mirrors CAS-DEMO-A1: PAY-101 (ORD-101, $499) and PAY-102 (ORD-102, $299)
+    are distinct settled payments for separate orders. The AI must NOT accept them
+    as a duplicate charge for the same order.
+    """
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult, ProposedAction, ActionType
+
+    # Evidence: two payments linked to DIFFERENT orders
+    evidence_items = [
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+        _make_evidence_item("EVD-PAY-102", "PAY-102", "ORD-102", amount=29900),
+    ]
+
+    # AI claims both payments are a duplicate charge (incorrect)
+    result = InvestigationResult(
+        case_id="CAS-DEMO-A1",
+        issue_type="duplicate_charge",
+        summary="Customer was charged twice for order ORD-101.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="The customer was charged twice $499.00 on their card for order ORD-101.",
+                evidence_ids=["EVD-PAY-101", "EVD-PAY-102"],
+                confidence=0.9,
+                is_accepted=True,
+                flagged=False,
+            )
+        ],
+        proposed_action=ProposedAction(
+            action_type=ActionType.REFUND,
+            target_payment_id="PAY-102",
+            amount=49900,
+            currency="USD",
+            reason="Refund the duplicate charge.",
+        ),
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+
+    # The duplicate-charge claim must be rejected
+    assert len(validated.claims) == 1
+    bad_claim = validated.claims[0]
+    assert bad_claim.flagged is True, "Claim citing payments from different orders must be flagged"
+    assert bad_claim.is_accepted is False, "Claim must be rejected"
+    assert bad_claim.rejection_reason is not None
+    assert "distinct orders" in bad_claim.rejection_reason.lower() or "different order" in bad_claim.rejection_reason.lower()
+
+    # The investigation must escalate because of the rejected claim
+    assert validated.needs_escalation is True
+    assert validated.has_unsupported_claims is True
+
+
+def test_duplicate_charge_claim_same_order_is_accepted(db_session: Session):
+    """Duplicate-charge claim citing two payments for THE SAME order passes the consistency check."""
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+
+    # Evidence: two payments BOTH linked to ORD-101
+    evidence_items = [
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+        _make_evidence_item("EVD-PAY-103", "PAY-103", "ORD-101", amount=49900),
+    ]
+
+    result = InvestigationResult(
+        case_id="CAS-SAME-ORDER",
+        issue_type="duplicate_charge",
+        summary="Two $499 charges captured for the same ORD-101.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="Two identical charges for ORD-101 were settled.",
+                evidence_ids=["EVD-PAY-101", "EVD-PAY-103"],
+                confidence=1.0,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+
+    claim = validated.claims[0]
+    assert claim.flagged is False, "Same-order duplicate-charge must NOT be flagged"
+    assert claim.is_accepted is True, "Same-order duplicate-charge claim must be accepted"
+    # No escalation should be triggered by the consistency check alone
+    assert validated.needs_escalation is False
+    assert validated.has_unsupported_claims is False
+
+
+def test_non_duplicate_charge_claim_type_unaffected_by_consistency_check(db_session: Session):
+    """Claim types other than duplicate_charge are NOT affected by the cross-order consistency check."""
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+
+    # Two payments from different orders, but claim is payment_charged (not duplicate_charge)
+    evidence_items = [
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+        _make_evidence_item("EVD-PAY-102", "PAY-102", "ORD-102", amount=29900),
+    ]
+
+    result = InvestigationResult(
+        case_id="CAS-PAYMENT-CHARGED",
+        issue_type="unrecognized_charge",
+        summary="Customer does not recognise the charge.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.PAYMENT_CHARGED,
+                statement="Payment PAY-101 for $499 was settled.",
+                evidence_ids=["EVD-PAY-101", "EVD-PAY-102"],
+                confidence=1.0,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+
+    claim = validated.claims[0]
+    assert claim.flagged is False, "Non-duplicate-charge claims must not be flagged by the order consistency check"
+    assert claim.is_accepted is True
+
+
+def test_duplicate_charge_claim_with_no_order_id_not_rejected(db_session: Session):
+    """Duplicate-charge claim whose payments have NO order_id metadata is not rejected by the check.
+
+    The check can only flag when distinct order IDs are *present and differ*.
+    Missing order_id is ambiguous and must not trigger a false rejection.
+    """
+    import json
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+    from app.models.evidence import FreshnessIndicator
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    # Payments with NO order_id in payload
+    ev1 = EvidenceItemRead(
+        id="EVD-PAY-X01",
+        case_id="CAS-NO-ORD",
+        customer_id="USR-CUST-A",
+        source_system="payment_provider",
+        source_record_id="PAY-X01",
+        occurred_at=now, received_at=now, fetched_at=now,
+        record_version=1,
+        freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+        data_payload=json.dumps({"payment_id": "PAY-X01", "amount": 49900, "status": "settled"}),
+    )
+    ev2 = EvidenceItemRead(
+        id="EVD-PAY-X02",
+        case_id="CAS-NO-ORD",
+        customer_id="USR-CUST-A",
+        source_system="payment_provider",
+        source_record_id="PAY-X02",
+        occurred_at=now, received_at=now, fetched_at=now,
+        record_version=1,
+        freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+        data_payload=json.dumps({"payment_id": "PAY-X02", "amount": 49900, "status": "settled"}),
+    )
+
+    result = InvestigationResult(
+        case_id="CAS-NO-ORD",
+        issue_type="duplicate_charge",
+        summary="Possible duplicate charge.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="Two charges of equal amount with no linked order.",
+                evidence_ids=["EVD-PAY-X01", "EVD-PAY-X02"],
+                confidence=0.6,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, [ev1, ev2])
+
+    # Must be rejected because missing order_id = incomplete evidence for duplicate-charge
+    claim = validated.claims[0]
+    assert claim.flagged is True, "Missing order_id = incomplete evidence, must be flagged"
+    assert claim.is_accepted is False, "Claim with no order linkage cannot be accepted as verified"
+    assert claim.rejection_reason is not None
+    assert "no order_id" in claim.rejection_reason.lower() or "incomplete" in claim.rejection_reason.lower()
+    assert validated.needs_escalation is True
+    assert validated.has_unsupported_claims is True
+
+
+def test_validate_claims_evidence_does_not_double_escalate_on_valid_claims(db_session: Session):
+    """Regression: a result with no flagged claims must not have escalation or unsupported flags set."""
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+
+    evidence_items = [
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+    ]
+
+    result = InvestigationResult(
+        case_id="CAS-CLEAN",
+        issue_type="payment_charged",
+        summary="Single charge confirmed.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.PAYMENT_CHARGED,
+                statement="One $499 charge settled.",
+                evidence_ids=["EVD-PAY-101"],
+                confidence=1.0,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+    assert validated.needs_escalation is False
+    assert validated.has_unsupported_claims is False
+
+
+# ---------------------------------------------------------------------------
+# Regression test: exact Sarvam result for CAS-DEMO-A1
+# ---------------------------------------------------------------------------
+
+def _make_order_evidence_item(
+    evidence_id: str,
+    order_id: str,
+    amount: int = 49900,
+    status: str = "completed",
+) -> EvidenceItemRead:
+    """Helper to build an order-type EvidenceItemRead (no payment_id in payload)."""
+    import json
+    from datetime import UTC, datetime
+    from app.models.evidence import FreshnessIndicator
+
+    now = datetime.now(UTC)
+    return EvidenceItemRead(
+        id=evidence_id,
+        case_id="CAS-DEMO-A1",
+        customer_id="USR-CUST-A",
+        source_system="order_service",
+        source_record_id=order_id,
+        occurred_at=now, received_at=now, fetched_at=now,
+        record_version=1,
+        freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+        data_payload=json.dumps({
+            "order_id": order_id,
+            "order_number": order_id,
+            "amount": amount,
+            "currency": "USD",
+            "status": status,
+        }),
+    )
+
+
+def test_sarvam_regression_cas_demo_a1_order_plus_one_payment_rejected(db_session: Session):
+    """Regression for the exact Sarvam result on CAS-DEMO-A1.
+
+    The live Sarvam model returned a duplicate_charge claim citing:
+      evidence_ids: ["EVD-ORD-101", "EVD-PAY-101"]
+
+    - EVD-ORD-101: order record (no payment_id field) for ORD-101, $499
+    - EVD-PAY-101: payment record PAY-101, order_id=ORD-101, $499, settled
+
+    Only ONE payment record is cited. An order record does not constitute a second
+    payment. The duplicate-charge claim must be flagged as insufficiently evidenced
+    and the investigation must escalate for human review.
+    """
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult, ProposedAction, ActionType
+
+    # Exact evidence package mirroring what the seeded CAS-DEMO-A1 collector produces
+    evidence_items = [
+        _make_order_evidence_item("EVD-ORD-101", "ORD-101", amount=49900, status="completed"),
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+        _make_evidence_item("EVD-PAY-102", "PAY-102", "ORD-102", amount=29900),
+    ]
+
+    # Exact claim shape returned by Sarvam
+    result = InvestigationResult(
+        case_id="CAS-DEMO-A1",
+        issue_type="duplicate_charge",
+        summary="The customer was charged twice $499.00 on their card for order ORD-101.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="The customer was charged twice $499.00 on their card for order ORD-101.",
+                evidence_ids=["EVD-ORD-101", "EVD-PAY-101"],  # only 1 payment cited
+                confidence=0.9,
+                is_accepted=True,
+                flagged=False,
+            )
+        ],
+        proposed_action=ProposedAction(
+            action_type=ActionType.DISMISS,
+            target_payment_id=None,
+            amount=None,
+            currency="USD",
+            reason="Evidence does not support duplicate charge allegation.",
+        ),
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+
+    # The duplicate-charge claim must NOT be accepted with only 1 payment record
+    assert len(validated.claims) == 1
+    bad_claim = validated.claims[0]
+    assert bad_claim.flagged is True, (
+        "Duplicate-charge claim citing only one payment record (plus an order record) must be flagged"
+    )
+    assert bad_claim.is_accepted is False
+    assert bad_claim.rejection_reason is not None
+    # Reason must mention insufficient payment records
+    reason_lower = bad_claim.rejection_reason.lower()
+    assert (
+        "insufficient" in reason_lower
+        or "at least two" in reason_lower
+        or "payment record" in reason_lower
+    ), f"Expected insufficiency reason, got: {bad_claim.rejection_reason!r}"
+    assert validated.needs_escalation is True
+    assert validated.has_unsupported_claims is True
+
+
+def test_duplicate_charge_one_payment_record_only_is_rejected(db_session: Session):
+    """A duplicate_charge claim citing a single payment record is always rejected.
+
+    You cannot verify a duplicate charge from one payment alone — a second, distinct
+    settled payment linked to the same order is required.
+    """
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+
+    evidence_items = [
+        _make_evidence_item("EVD-PAY-101", "PAY-101", "ORD-101", amount=49900),
+    ]
+
+    result = InvestigationResult(
+        case_id="CAS-ONE-PAY",
+        issue_type="duplicate_charge",
+        summary="Claim with only one payment cited.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="Customer was charged twice.",
+                evidence_ids=["EVD-PAY-101"],
+                confidence=0.5,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+    claim = validated.claims[0]
+    assert claim.flagged is True
+    assert claim.is_accepted is False
+    assert "insufficient" in claim.rejection_reason.lower() or "at least two" in claim.rejection_reason.lower()
+    assert validated.needs_escalation is True
+
+
+def test_duplicate_charge_unsettled_payment_is_rejected(db_session: Session):
+    """A duplicate_charge claim fails if any cited payment is not settled."""
+    import json
+    from datetime import UTC, datetime
+    from app.llm.service import validate_claims_evidence
+    from app.schemas.investigation import Claim, ClaimType, InvestigationResult
+    from app.models.evidence import FreshnessIndicator
+
+    now = datetime.now(UTC)
+
+    def _make_pay(eid, pay_id, order_id, status):
+        return EvidenceItemRead(
+            id=eid, case_id="CAS-UNSETTLED", customer_id="USR-CUST-A",
+            source_system="payment_provider", source_record_id=pay_id,
+            occurred_at=now, received_at=now, fetched_at=now, record_version=1,
+            freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+            data_payload=json.dumps(
+                {"payment_id": pay_id, "order_id": order_id,
+                 "amount": 49900, "currency": "USD", "status": status}
+            ),
+        )
+
+    evidence_items = [
+        _make_pay("EVD-PAY-A", "PAY-A", "ORD-101", "settled"),
+        _make_pay("EVD-PAY-B", "PAY-B", "ORD-101", "authorized"),  # NOT settled
+    ]
+
+    result = InvestigationResult(
+        case_id="CAS-UNSETTLED",
+        issue_type="duplicate_charge",
+        summary="Two charges, one not yet settled.",
+        claims=[
+            Claim(
+                claim_type=ClaimType.DUPLICATE_CHARGE,
+                statement="Two charges for ORD-101, one authorized.",
+                evidence_ids=["EVD-PAY-A", "EVD-PAY-B"],
+                confidence=0.7,
+            )
+        ],
+        needs_escalation=False,
+        has_unsupported_claims=False,
+    )
+
+    validated = validate_claims_evidence(result, evidence_items)
+    claim = validated.claims[0]
+    assert claim.flagged is True
+    assert claim.is_accepted is False
+    assert "settled" in claim.rejection_reason.lower()
+    assert validated.needs_escalation is True
+
+
+def test_cas_demo_a1_regression_invalid_refund_targeting_pay_102(db_session: Session):
+    """Regression test specifically for CAS-DEMO-A1:
+    - PAY-101 is $499.00 on ORD-101 (settled).
+    - PAY-102 is $299.00 on ORD-102 (settled).
+    - Model claims PAY-102 is a duplicate charge for ORD-101 and proposes $499 refund on PAY-102.
+    - Deterministic validation must reject the claim, reject the $499 refund proposal on $299 payment,
+      mark verification_status as contradicted, and trigger safe human escalation.
+    """
+    mock_client = MockLLMClient()
+    result = run_case_investigation(
+        db=db_session,
+        case_id="CAS-DEMO-A1",
+        llm_client=mock_client,
+    )
+
+    # 1. Verification and escalation state
+    assert result.needs_escalation is True
+    assert result.has_unsupported_claims is True
+    assert result.verification_status == "contradicted"
+
+    # 2. Duplicate charge claim must be rejected
+    flagged_claims = [c for c in result.claims if c.flagged or not c.is_accepted]
+    assert len(flagged_claims) > 0
+    dup_claim = next(c for c in result.claims if c.claim_type == ClaimType.DUPLICATE_CHARGE)
+    assert dup_claim.flagged is True
+    assert dup_claim.is_accepted is False
+
+    # 3. Proposed refund action must be explicitly invalidated
+    assert result.proposed_action is not None
+    assert result.proposed_action.is_valid is False
+    assert result.proposed_action.target_payment_id == "PAY-102"
+    assert result.proposed_action.amount == 49900
+
+    # 4. Independent validation checks against authoritative records
+    rejection = result.proposed_action.rejection_reason
+    assert "499" in rejection  # proposed amount
+    assert "299" in rejection  # actual amount
+    assert "ORD-102" in rejection  # distinct order relationship
+
+    # 5. Deterministic validation checks list
+    checks = {c.name: c for c in result.validation_checks}
+    assert "Evidence Package Membership" in checks
+    assert checks["Evidence Package Membership"].status == "PASSED"
+    assert "Duplicate Charge Verification" in checks
+    assert checks["Duplicate Charge Verification"].status == "FAILED"
+    assert "Proposed Action Verification" in checks
+    assert checks["Proposed Action Verification"].status == "FAILED"
+
+    # 6. Mutual consistency: summary explains validation failure
+    assert "DETERMINISTIC VALIDATION FAILED" in result.summary
+    assert "Human escalation required" in result.summary
+
+
+def test_proposed_action_validation_exceeding_payment_amount_rejected():
+    """Deterministic validation: proposed refund cannot exceed actual payment amount."""
+    now = datetime.now(UTC)
+    evidence_items = [
+        EvidenceItemRead(
+            id="EVD-PAY-1", case_id="CAS-1", customer_id="USR-1",
+            source_system="payment_provider", source_record_id="PAY-1",
+            occurred_at=now, received_at=now, fetched_at=now, record_version=1,
+            freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+            data_payload=json.dumps({"payment_id": "PAY-1", "order_id": "ORD-1", "amount": 10000, "currency": "USD", "status": "settled"}),
+        )
+    ]
+    result = InvestigationResult(
+        case_id="CAS-1",
+        issue_type="duplicate_charge",
+        summary="Test investigation",
+        claims=[
+            Claim(
+                claim_type=ClaimType.PAYMENT_CHARGED,
+                statement="Payment settled",
+                evidence_ids=["EVD-PAY-1"],
+            )
+        ],
+        proposed_action=ProposedAction(
+            action_type=ActionType.REFUND,
+            target_payment_id="PAY-1",
+            amount=20000,  # $200.00 refund on a $100.00 payment
+            currency="USD",
+            reason="Refund excess",
+        ),
+    )
+    validated = validate_claims_evidence(result, evidence_items)
+    assert validated.proposed_action.is_valid is False
+    assert "exceeds" in validated.proposed_action.rejection_reason.lower()
+    assert validated.needs_escalation is True
+
+
+def test_proposed_action_validation_unsettled_target_payment_rejected():
+    """Deterministic validation: cannot refund a non-settled payment."""
+    now = datetime.now(UTC)
+    evidence_items = [
+        EvidenceItemRead(
+            id="EVD-PAY-1", case_id="CAS-1", customer_id="USR-1",
+            source_system="payment_provider", source_record_id="PAY-1",
+            occurred_at=now, received_at=now, fetched_at=now, record_version=1,
+            freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+            data_payload=json.dumps({"payment_id": "PAY-1", "order_id": "ORD-1", "amount": 10000, "currency": "USD", "status": "authorized"}),
+        )
+    ]
+    result = InvestigationResult(
+        case_id="CAS-1",
+        issue_type="duplicate_charge",
+        summary="Test investigation",
+        claims=[
+            Claim(
+                claim_type=ClaimType.PAYMENT_CHARGED,
+                statement="Payment authorized",
+                evidence_ids=["EVD-PAY-1"],
+            )
+        ],
+        proposed_action=ProposedAction(
+            action_type=ActionType.REFUND,
+            target_payment_id="PAY-1",
+            amount=10000,
+            currency="USD",
+            reason="Refund hold",
+        ),
+    )
+    validated = validate_claims_evidence(result, evidence_items)
+    assert validated.proposed_action.is_valid is False
+    assert "settled" in validated.proposed_action.rejection_reason.lower()
+    assert validated.needs_escalation is True
+
+
+def test_proposed_action_validation_nonexistent_payment_rejected():
+    """Deterministic validation: cannot refund a payment that does not exist in customer records."""
+    now = datetime.now(UTC)
+    evidence_items = [
+        EvidenceItemRead(
+            id="EVD-PAY-1", case_id="CAS-1", customer_id="USR-1",
+            source_system="payment_provider", source_record_id="PAY-1",
+            occurred_at=now, received_at=now, fetched_at=now, record_version=1,
+            freshness_indicator=FreshnessIndicator.CURRENT_STATE_CONFIRMED,
+            data_payload=json.dumps({"payment_id": "PAY-1", "order_id": "ORD-1", "amount": 10000, "currency": "USD", "status": "settled"}),
+        )
+    ]
+    result = InvestigationResult(
+        case_id="CAS-1",
+        issue_type="duplicate_charge",
+        summary="Test investigation",
+        claims=[
+            Claim(
+                claim_type=ClaimType.PAYMENT_CHARGED,
+                statement="Payment settled",
+                evidence_ids=["EVD-PAY-1"],
+            )
+        ],
+        proposed_action=ProposedAction(
+            action_type=ActionType.REFUND,
+            target_payment_id="PAY-DOES-NOT-EXIST",
+            amount=10000,
+            currency="USD",
+            reason="Refund phantom payment",
+        ),
+    )
+    validated = validate_claims_evidence(result, evidence_items)
+    assert validated.proposed_action.is_valid is False
+    assert "does not exist" in validated.proposed_action.rejection_reason.lower()
+    assert validated.needs_escalation is True

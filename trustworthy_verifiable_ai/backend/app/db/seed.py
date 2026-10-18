@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.security import get_password_hash
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
+from app.models.case import Case, CaseStatus
 from app.models.order import Order
 from app.models.payment import Payment, PaymentEvent, PaymentStatus
 from app.models.policy import Policy
@@ -61,6 +62,7 @@ def seed_database(db: Session | None = None) -> dict[str, int]:
         "payments": 0,
         "refunds": 0,
         "payment_events": 0,
+        "cases": 0,
     }
 
     try:
@@ -156,6 +158,64 @@ def seed_database(db: Session | None = None) -> dict[str, int]:
                     )
                     db.add(evt)
                     counts["payment_events"] += 1
+
+        # 4. Seed Complaint Cases (Scenarios a through f)
+        demo_cases = [
+            {
+                "id": "CAS-DEMO-A1",
+                "customer_id": "USR-CUST-A",
+                "title": "Double Charge on Order ORD-101",
+                "description": "I was charged twice $499.00 on my card for order ORD-101. Please refund the duplicate transaction PAY-102.",
+                "status": CaseStatus.OPEN,
+            },
+            {
+                "id": "CAS-DEMO-B1",
+                "customer_id": "USR-CUST-B",
+                "title": "Unsettled Authorization Hold",
+                "description": "I see an extra $100.00 authorization hold PAY-202 that hasn't cleared or been released.",
+                "status": CaseStatus.OPEN,
+            },
+            {
+                "id": "CAS-DEMO-C1",
+                "customer_id": "USR-CUST-C",
+                "title": "Missing Refund for Cancelled Order ORD-301",
+                "description": "My order was cancelled but the refund of $150.00 for payment PAY-301 is still pending and hasn't arrived.",
+                "status": CaseStatus.OPEN,
+            },
+            {
+                "id": "CAS-DEMO-D1",
+                "customer_id": "USR-CUST-D",
+                "title": "Order Failed but Payment Settled",
+                "description": "My order ORD-401 failed at checkout, but $50.00 was captured from my card under payment PAY-401.",
+                "status": CaseStatus.OPEN,
+            },
+            {
+                "id": "CAS-DEMO-E1",
+                "customer_id": "USR-CUST-E",
+                "title": "Duplicate Payment Settlement Event",
+                "description": "I noticed duplicate settlement webhook events recorded on payment PAY-501.",
+                "status": CaseStatus.OPEN,
+            },
+            {
+                "id": "CAS-DEMO-F1",
+                "customer_id": "USR-CUST-F",
+                "title": "Out of Order Transaction Events",
+                "description": "Events for transaction PAY-601 arrived out of order, showing settled before authorization.",
+                "status": CaseStatus.OPEN,
+            },
+        ]
+
+        for c in demo_cases:
+            if not db.query(Case).filter(Case.id == c["id"]).first():
+                case = Case(
+                    id=c["id"],
+                    customer_id=c["customer_id"],
+                    title=c["title"],
+                    description=c["description"],
+                    status=c["status"],
+                )
+                db.add(case)
+                counts["cases"] += 1
 
         db.commit()
         return counts

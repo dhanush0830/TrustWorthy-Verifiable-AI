@@ -17,6 +17,7 @@ def test_seed_idempotency(db_session: Session):
     assert second_run_counts["payments"] == 0
     assert second_run_counts["refunds"] == 0
     assert second_run_counts["payment_events"] == 0
+    assert second_run_counts["cases"] == 0
 
 
 def test_scenario_a_two_settled_payments(db_session: Session):

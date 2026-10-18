@@ -38,6 +38,14 @@ class Claim(BaseModel):
     rejection_reason: str | None = Field(default=None, description="Reason if claim was flagged or rejected")
 
 
+class ValidationCheck(BaseModel):
+    """Outcome of an individual deterministic validation check."""
+    name: str = Field(..., description="Name of the deterministic validation check")
+    status: str = Field(..., description="Outcome: 'PASSED', 'FAILED', or 'NOT_APPLICABLE'")
+    description: str = Field(..., description="What rule or invariant is being verified")
+    details: str | None = Field(default=None, description="Detailed explanation of the check outcome")
+
+
 class ProposedAction(BaseModel):
     """Optional action proposed by the AI investigation, subject to deterministic verification."""
     action_type: ActionType = Field(..., description="Recommended action type")
@@ -48,6 +56,9 @@ class ProposedAction(BaseModel):
     )
     currency: str = Field(default="USD", description="Currency fixed to USD")
     reason: str = Field(..., description="Justification synthesized from claims")
+    is_valid: bool = Field(default=True, description="Whether this proposed action passed deterministic validation checks")
+    rejection_reason: str | None = Field(default=None, description="Reason if proposed action was rejected")
+    validation_errors: list[str] = Field(default_factory=list, description="List of failed validation check messages")
 
 
 class ModelMetadata(BaseModel):
@@ -66,11 +77,19 @@ class InvestigationResult(BaseModel):
     claims: list[Claim] = Field(default_factory=list, description="List of evidence-backed claims")
     proposed_action: ProposedAction | None = Field(
         default=None,
-        description="Optional action proposed by the model (verified later in Phase 3)"
+        description="Optional action proposed by the model (subject to deterministic validation)"
     )
     needs_escalation: bool = Field(default=False, description="Flag indicating safe abstention / human review needed")
     has_unsupported_claims: bool = Field(default=False, description="True if any claims were flagged as unsupported")
     model_metadata: ModelMetadata | None = Field(default=None, description="Model invocation metadata")
+    verification_status: str = Field(
+        default="verified",
+        description="Overall verification status: 'verified', 'contradicted', 'inconclusive', or 'escalated'"
+    )
+    validation_checks: list[ValidationCheck] = Field(
+        default_factory=list,
+        description="Outcomes of deterministic validation checks executed on claims and proposed actions"
+    )
 
 
 class InvestigateRequest(BaseModel):
@@ -79,3 +98,8 @@ class InvestigateRequest(BaseModel):
         default=None,
         description="Optional customer complaint text override (limited to MAX_COMPLAINT_CHARS)"
     )
+    provider: str | None = Field(
+        default=None,
+        description="Optional explicit LLM provider override ('mock', 'sarvam', 'ollama', 'auto')"
+    )
+

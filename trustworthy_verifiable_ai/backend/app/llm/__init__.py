@@ -5,16 +5,20 @@ from app.llm.base import (
     parse_and_validate,
     strip_thinking_tags,
 )
+from app.llm.circuit_breaker import CircuitBreaker
 from app.llm.mock_client import MockLLMClient
 from app.llm.ollama_client import OllamaClient
 from app.llm.prompts import SYSTEM_INVESTIGATION_PROMPT, build_investigation_user_prompt
+from app.llm.sarvam_client import SarvamClient
 from app.llm.service import get_llm_client, run_case_investigation
 
 __all__ = [
     "SYSTEM_INVESTIGATION_PROMPT",
     "BaseLLMClient",
+    "CircuitBreaker",
     "MockLLMClient",
     "OllamaClient",
+    "SarvamClient",
     "build_investigation_user_prompt",
     "extract_json_payload",
     "get_llm_client",

@@ -10,3 +10,7 @@ build/
 .env
 *.db
 .DS_Store
+
+# Frontend dependencies and build output
+**/node_modules/
+**/dist/

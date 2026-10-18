@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
+from app.api.cases import router as cases_router
 from app.api.investigate import router as investigate_router
 from app.api.payments import router as payments_router
 from app.core.config import get_settings
@@ -38,5 +39,6 @@ def health_check():
 
 # Include API routers
 app.include_router(auth_router, prefix=settings.API_V1_STR)
+app.include_router(cases_router, prefix=settings.API_V1_STR)
 app.include_router(payments_router, prefix=settings.API_V1_STR)
 app.include_router(investigate_router, prefix=settings.API_V1_STR)
